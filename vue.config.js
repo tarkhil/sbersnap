@@ -1,4 +1,10 @@
 module.exports = {
+  chainWebpack: config => {
+    config.plugin("html").tap(args => {
+      args[0].template = "./resources/index.html";
+      return args;
+    });
+  },
   configureWebpack: {
     devServer: {
       watchOptions: {

@@ -1,0 +1,80 @@
+#!/usr/bin/env perl
+use Mojolicious::Lite -signatures;
+use Mojo::UserAgent;
+use Mojo::UserAgent::Transactor;
+use Mojo::JSON qw/decode_json from_json/;
+use YAML;
+
+options '/api/sber' => sub ($c) {
+  $c->res->headers->allow('OPTIONS,GET,HEAD,POST');
+  $c->res->headers->add('Access-Control-Allow-Origin' => '*');
+  $c->res->headers->add("Access-Control-Allow-Credentials", "true");
+  $c->res->headers->add("Access-Control-Allow-Headers",
+			   "Access-Control-Allow-Headers, Access-Control-Allow-Origin, Origin,Accept, X-API-Auth, Content-Type, Access-Control-Request-Method, Access-Control-Request-Headers");
+  $c->render(text=>'');
+};
+
+sub fail ($c, $m ) {
+  warn $c->res->body;
+  $c->log->error($m);
+  $c->render( status => 500, error => $m, text => $m );
+}
+
+post '/api/sber' => sub ($c) {
+  my $json = $c->req->json;
+  my $ua = Mojo::UserAgent->new()->transactor(Mojo::UserAgent::Transactor->new->name('SberSnap/0.1 <tarkhil@over.ru>'));
+  warn Dump $json;
+  #$json->{start} = '01.11.2020';
+  #$json->{stop} = '01.12.2021';
+  my $tx = $ua->post(
+		     'https://node1.online.sberbank.ru/PhizIC/clientapi/private/payments/list.do?from='.$json->{start}.'&to='.$json->{stop}.'&paginationSize=2000&paginationOffset=0&includeUfs=true&showExternal=true'
+		     =>
+	      {
+	       'Cookie' => $json->{cookies},
+	       'Accept' => 'application/json, text/plain, */*',
+	       'Accept-Language' => 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7',
+	       'Cache-Control' => 'no-cache',
+	       'Content-Type' => 'application/json',
+	       'DNT' => '1',
+	       'Origin' => 'https://front.node1.online.sberbank.ru',
+	       'Pragma' => 'no-cache',
+	       'Referer' => 'https://front.node1.online.sberbank.ru/',
+	       'Sec-Fetch-Dest' => 'empty',
+	       'Sec-Fetch-Mode' => 'cors',
+	       'Sec-Fetch-Site' => 'same-site'
+	      } => json => {} );
+  #warn $tx->req->to_string;
+  #warn $tx->res->text;
+  my $json = from_json( $tx->res->text );
+  #warn Dump $json;
+  if ( $tx->res->code != 200 ) {
+    $c->log->error( "Error ".$tx->res->code );
+    $c->log->error( $tx->res->error );
+    $c->render( status => $tx->res->code, error => $tx->res->error, text => $tx->res->error );
+  } elsif ( $tx->res->headers->header('Content-Type') !~ m|^application/json| ) {
+    $c->log->error("Content type is ".$tx->res->headers->header('Content-Type'));
+    $c->render( status => 500, error => $tx->res->text, text => $tx->res->error );
+  } elsif ( !defined($json) ) {
+    fail($c,"Empty json. Could not parse json response?");
+  } elsif ( !exists($json->{response}) ) {
+    fail($c, "No response?");
+  } elsif ( $json->{response}->{status}->{code} != 0 ) {
+    fail($c, "Response status is ".$json->{response}->{status}->{code} );
+  } else {
+    my $ops = $json->{response}->{operations}->{operation};
+    #warn Dump $ops;
+    my $rows = [];
+    for my $op ( @$ops ) {
+      next unless exists $op->{nationalAmount};
+      #warn Dump { map { +"$_" => $op->{$_} } qw/date description from to stateHint/ };
+      push @$rows, { (map { +"$_" => $op->{$_} } qw/date description from to stateHint/),
+		     commission_amount => $op->{commission}->{amount}//0,
+		     commission_currency => $op->{commission}->{currency}->{name}//'',
+		     op_amount => $op->{nationalAmount}->{amount},
+		     op_currency => $op->{nationalAmount}->{currency}->{name} };
+    }
+    $c->render( json => { operations => $rows } );
+  }
+};
+
+app->start;

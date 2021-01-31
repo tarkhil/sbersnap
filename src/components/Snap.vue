@@ -20,8 +20,8 @@
       <div class="col-md-12">
         Статус: {{ currentStatus }}
         <span v-if="running"
-          >{{ Format(date.Start, "dd/MM/yyyy") }} -
-          {{ Format(date.End, "dd/MM/yyyy") }}</span
+          >{{ Format(part.Start, "dd/MM/yyyy") }} -
+          {{ Format(part.End, "dd/MM/yyyy") }}</span
         >
       </div>
     </div>
@@ -65,6 +65,8 @@ Vue.use(MonthPicker);
 Vue.use(MonthPickerInput);
 import { format } from "date-fns";
 import add from "date-fns/add";
+import { saveAs } from "file-saver";
+import { json2csv } from "json-2-csv";
 
 export default {
   components: {
@@ -74,6 +76,7 @@ export default {
     return {
       messages: [],
       csv: "",
+      ops: [],
       currentStatus: "ждем",
       cookies: "",
       running: false,
@@ -118,44 +121,45 @@ export default {
       this.running = true;
       try {
         while (!stop) {
-          console.log(format(this.part.Start, "dd.MM.yyyy"));
-          const month = await axios.post(
-            "https://node1.online.sberbank.ru/PhizIC/clientapi/private/payments/list.do?from=" +
-              format(this.part.Start, "dd.MM.yyyy") +
-              "&to=" +
-              format(this.part.End, "dd.MM.yyyy") +
-              "&paginationSize=2000&paginationOffset=0&includeUfs=true&showExternal=true",
-            {},
-            {
-              withCredentials: true,
-              headers: {
-                Cookie: this.cookies,
-                Accept: "application/json, text/plain, */*",
-                "Accept-Encoding": "gzip, deflate, br",
-                "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
-                "Cache-Control": "no-cache",
-                "Content-Type": "application/json",
-                DNT: "1",
-                Origin: "https://front.node1.online.sberbank.ru",
-                Pragma: "no-cache",
-                Referer: "https://front.node1.online.sberbank.ru/",
-                "Sec-Fetch-Dest": "empty",
-                "Sec-Fetch-Mode": "cors",
-                "Sec-Fetch-Site": "same-site"
-              }
-            }
-          );
-          console.log(month);
+          const month = await axios.post("https://snap.over.ru/api/sber", {
+            start: format(this.part.Start, "dd.MM.yyyy"),
+            stop: format(this.part.End, "dd.MM.yyyy"),
+            cookies: this.cookies
+          });
+          this.ops = this.ops.concat(month.data.operations);
           this.part.Start = add(this.part.Start, { months: 1 });
           this.part.End = add(this.part.Start, { months: 1 });
           stop = this.part.End >= this.date.End;
         }
-        // Тут выгрузить файл
+        await json2csv(this.ops, (err, csv) => {
+          if (err) {
+            this.messages.push({
+              text: "Ошибка преобразования: " + err,
+              variant: "danger"
+            });
+          } else {
+            saveAs(new Blob([csv]), "report.csv", {
+              keys: [
+                "date",
+                "from",
+                "to",
+                "description",
+                "stateHint",
+                "op_amount",
+                "op_currency",
+                "commission_amount",
+                "commission_currency"
+              ]
+            });
+            this.messages.push({ text: "закончили", variant: "info" });
+            this.ops = [];
+          }
+        });
       } catch (err) {
         console.error(err);
         this.messages.push({ text: err, variant: "danger" });
+        this.ops = [];
       }
-      this.messages.push({ text: "закончили", variant: "info" });
       this.currentStatus = "ждем";
       this.running = false;
     }
