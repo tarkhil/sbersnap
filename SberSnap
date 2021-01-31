@@ -23,9 +23,6 @@ sub fail ($c, $m ) {
 post '/api/sber' => sub ($c) {
   my $json = $c->req->json;
   my $ua = Mojo::UserAgent->new()->transactor(Mojo::UserAgent::Transactor->new->name('SberSnap/0.1 <tarkhil@over.ru>'));
-  warn Dump $json;
-  #$json->{start} = '01.11.2020';
-  #$json->{stop} = '01.12.2021';
   my $tx = $ua->post(
 		     'https://node1.online.sberbank.ru/PhizIC/clientapi/private/payments/list.do?from='.$json->{start}.'&to='.$json->{stop}.'&paginationSize=2000&paginationOffset=0&includeUfs=true&showExternal=true'
 		     =>
@@ -43,10 +40,7 @@ post '/api/sber' => sub ($c) {
 	       'Sec-Fetch-Mode' => 'cors',
 	       'Sec-Fetch-Site' => 'same-site'
 	      } => json => {} );
-  #warn $tx->req->to_string;
-  #warn $tx->res->text;
-  my $json = from_json( $tx->res->text );
-  #warn Dump $json;
+  $json = from_json( $tx->res->text );
   if ( $tx->res->code != 200 ) {
     $c->log->error( "Error ".$tx->res->code );
     $c->log->error( $tx->res->error );
@@ -62,11 +56,9 @@ post '/api/sber' => sub ($c) {
     fail($c, "Response status is ".$json->{response}->{status}->{code} );
   } else {
     my $ops = $json->{response}->{operations}->{operation};
-    #warn Dump $ops;
     my $rows = [];
     for my $op ( @$ops ) {
       next unless exists $op->{nationalAmount};
-      #warn Dump { map { +"$_" => $op->{$_} } qw/date description from to stateHint/ };
       push @$rows, { (map { +"$_" => $op->{$_} } qw/date description from to stateHint/),
 		     commission_amount => $op->{commission}->{amount}//0,
 		     commission_currency => $op->{commission}->{currency}->{name}//'',
